@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>High-End Athletic Humanoid (No Sprites)</title>
+    <title>Pro-Level Humanoid Kinematics</title>
     <style>
-        body { margin: 0; background: radial-gradient(circle, #1a1a1a 0%, #000 100%); overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; }
     </style>
 </head>
 <body>
@@ -16,94 +16,110 @@
         import * as THREE from 'three';
 
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // Lighting - Guna 'Rim Light' untuk nampak muscle contour
-        const light1 = new THREE.PointLight(0xffffff, 100, 100);
-        light1.position.set(5, 5, 5);
-        scene.add(light1);
+        // Lighting (Cinematic Studio Setup)
+        const light = new THREE.DirectionalLight(0xffffff, 2);
+        light.position.set(2, 5, 5);
+        scene.add(light);
+        const backLight = new THREE.PointLight(0xff0044, 10, 10);
+        backLight.position.set(-2, 2, -2);
+        scene.add(backLight);
 
-        const light2 = new THREE.PointLight(0x0088ff, 50, 100); // Rim light biru
-        light2.position.set(-5, 2, -5);
-        scene.add(light2);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.2, metalness: 0.8 });
 
-        // Material "Liquid Obsidian" - Nampak mahal & sleek
-        const bodyMat = new THREE.MeshStandardMaterial({ 
-            color: 0x111111, roughness: 0.1, metalness: 0.9, flatShading: false 
-        });
+        // Helper: Buat Joint (Sfera kecik)
+        const createJoint = () => new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 16), mat);
+        
+        // Helper: Buat Bone (Capsule yang tapered)
+        const createBone = (height, radius) => {
+            const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, height, 10, 20), mat);
+            mesh.position.y = -height/2; // Pivot kat atas
+            return mesh;
+        };
 
-        const model = new THREE.Group();
+        const body = new THREE.Group();
 
-        // 1. Torso (V-Shape Athletic)
-        const torsoGeo = new THREE.CylinderGeometry(0.35, 0.15, 1.0, 32);
-        const torso = new THREE.Mesh(torsoGeo, bodyMat);
-        torso.scale.set(1.2, 1, 0.6); // Pipihkan dada
-        torso.position.y = 1.2;
-        model.add(torso);
+        // 1. Torso & Hips
+        const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.5, 10, 20), mat);
+        chest.scale.set(1.5, 1, 0.8);
+        chest.position.y = 1.4;
+        body.add(chest);
 
-        // 2. Head (Ovoid Shape, bukan bola bulat)
-        const headGeo = new THREE.SphereGeometry(0.18, 32, 32);
-        const head = new THREE.Mesh(headGeo, bodyMat);
-        head.scale.set(0.9, 1.1, 1); // Bentuk muka lonjong
-        head.position.y = 1.9;
-        model.add(head);
+        // 2. Head (Anatomical Ovoid)
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 32, 32), mat);
+        head.scale.set(0.85, 1.1, 1);
+        head.position.y = 0.45; // Relative to chest
+        chest.add(head);
 
-        // 3. Shoulders (Bagi nampak tegap)
-        const shoulderGeo = new THREE.SphereGeometry(0.15, 16, 16);
-        const shL = new THREE.Mesh(shoulderGeo, bodyMat);
-        shL.position.set(0.45, 1.6, 0);
-        const shR = shL.clone();
-        shR.position.x = -0.45;
-        model.add(shL, shR);
-
-        // 4. Arms (Tapered - besar atas, kecik bawah)
-        function createArm(isLeft) {
-            const arm = new THREE.Group();
-            const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.06, 0.5), bodyMat);
-            const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.04, 0.5), bodyMat);
-            upper.position.y = -0.25;
-            lower.position.y = -0.75;
-            arm.add(upper, lower);
-            arm.position.set(isLeft ? 0.45 : -0.45, 1.6, 0);
-            return arm;
+        // 3. ARM SYSTEM (Shoulder -> Elbow -> Hand)
+        function buildArm(side) {
+            const shoulder = createJoint();
+            shoulder.position.set(side * 0.4, 0.25, 0);
+            
+            const upperArm = createBone(0.4, 0.07);
+            shoulder.add(upperArm);
+            
+            const elbow = createJoint();
+            elbow.position.y = -0.45;
+            upperArm.add(elbow);
+            
+            const lowerArm = createBone(0.4, 0.05);
+            elbow.add(lowerArm);
+            
+            return { shoulder, elbow };
         }
-        const armL = createArm(true);
-        const armR = createArm(false);
-        model.add(armL, armR);
 
-        // 5. Legs (Powerful Athletic Thighs)
-        function createLeg(isLeft) {
-            const leg = new THREE.Group();
-            const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.1, 0.7), bodyMat);
-            const calf = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.05, 0.7), bodyMat);
-            thigh.position.y = -0.35;
-            calf.position.y = -1.0;
-            leg.add(thigh, calf);
-            leg.position.set(isLeft ? 0.18 : -0.18, 0.7, 0);
-            return leg;
+        const leftArm = buildArm(1);
+        const rightArm = buildArm(-1);
+        chest.add(leftArm.shoulder, rightArm.shoulder);
+
+        // 4. LEG SYSTEM (Hip -> Knee -> Foot)
+        function buildLeg(side) {
+            const hip = createJoint();
+            hip.position.set(side * 0.2, -0.3, 0);
+            
+            const thigh = createBone(0.5, 0.1);
+            hip.add(thigh);
+            
+            const knee = createJoint();
+            knee.position.y = -0.55;
+            thigh.add(knee);
+            
+            const calf = createBone(0.5, 0.07);
+            knee.add(calf);
+            
+            return { hip, knee };
         }
-        const legL = createLeg(true);
-        const legR = createLeg(false);
-        model.add(legL, legR);
 
-        scene.add(model);
-        camera.position.set(0, 1.2, 5);
+        const leftLeg = buildLeg(1);
+        const rightLeg = buildLeg(-1);
+        chest.add(leftLeg.hip, rightLeg.hip);
 
-        // ANIMATION: Shadow Boxer Mode
+        scene.add(body);
+        camera.position.set(0, 1.5, 4);
+
+        // Animation Loop (Natural Walking/Combat Stance)
         function animate() {
             requestAnimationFrame(animate);
-            const t = Date.now() * 0.003;
-            
-            // Pergerakan bahu/badan bila "pusing"
-            model.rotation.y = Math.sin(t * 0.5) * 0.2;
-            
-            // Animasi tumbuk (Arm Extension)
-            armL.rotation.x = Math.sin(t) * 0.8; 
-            armR.rotation.x = Math.cos(t) * 0.8;
+            const t = Date.now() * 0.004;
 
+            // Shoulder rotation
+            leftArm.shoulder.rotation.x = Math.sin(t) * 0.5;
+            rightArm.shoulder.rotation.x = -Math.sin(t) * 0.5;
+
+            // ELBOW FLEXING (This is what you wanted!)
+            leftArm.elbow.rotation.x = Math.abs(Math.cos(t)) * 1.2;
+            rightArm.elbow.rotation.x = Math.abs(Math.sin(t)) * 1.2;
+
+            // Knee flexing
+            leftLeg.knee.rotation.x = Math.abs(Math.sin(t)) * 0.8;
+            rightLeg.knee.rotation.x = Math.abs(Math.cos(t)) * 0.8;
+
+            body.rotation.y += 0.01;
             renderer.render(scene, camera);
         }
         animate();

@@ -920,7 +920,7 @@ function loop(ts){
         const px=player.x+player.w/2,py=player.y;
         const ex=e.x+e.w/2,ey=e.y+e.h;
         const dx=px-ex,dy=py-ey,dist=Math.sqrt(dx*dx+dy*dy);
-        eBullets.push({x:ex,y:ey,vx:dx/dist*1.8,vy:dy/dist*1.8+0.9});
+        eBullets.push({x:ex,y:ey,vx:dx/dist*1.3,vy:dy/dist*1.3+0.9});
       }
     }
   });

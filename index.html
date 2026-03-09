@@ -23,10 +23,10 @@ body{background:#111;display:flex;align-items:center;justify-content:center;min-
 .hud-center{display:flex;flex-direction:column;align-items:center;gap:2px;}
 .wave-badge{font-family:'Bebas Neue',sans-serif;font-size:28px;color:#ffcc44;text-shadow:0 0 12px rgba(255,200,50,0.5);letter-spacing:3px;}
 
-/* Health */
-#hpRow{position:absolute;top:58px;left:8px;right:8px;z-index:20;pointer-events:none;}
-#hpBar{height:5px;background:rgba(0,0,0,0.5);border-radius:3px;border:1px solid rgba(255,255,255,0.1);}
-#hpFill{height:100%;border-radius:3px;transition:width .15s;}
+/* Health — vertical bar on right side */
+#hpRow{position:absolute;top:60px;right:6px;bottom:140px;width:8px;z-index:20;pointer-events:none;}
+#hpBar{width:100%;height:100%;background:rgba(0,0,0,0.5);border-radius:4px;border:1px solid rgba(255,255,255,0.1);display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden;}
+#hpFill{width:100%;border-radius:3px;transition:height .15s;}
 
 /* Power-up bar */
 #pwRow{position:absolute;top:70px;left:8px;right:8px;z-index:20;pointer-events:none;display:flex;flex-wrap:wrap;gap:4px;}
@@ -81,7 +81,7 @@ body{background:#111;display:flex;align-items:center;justify-content:center;min-
     <div class="hud-flag-row">
       <canvas class="flag" id="flagIran" width="32" height="20"></canvas>
       <div>
-        <div class="hud-label">PILOT</div>
+        <div class="hud-label">SAYANG</div>
         <div class="hud-val">SU-35</div>
       </div>
     </div>
@@ -94,7 +94,7 @@ body{background:#111;display:flex;align-items:center;justify-content:center;min-
   <div class="hud-col" style="align-items:flex-end">
     <div class="hud-flag-row">
       <div style="text-align:right">
-        <div class="hud-label">ENEMY</div>
+        <div class="hud-label">USA</div>
         <div class="hud-val red">F-22</div>
       </div>
       <canvas class="flag" id="flagUSA" width="32" height="20"></canvas>
@@ -104,7 +104,8 @@ body{background:#111;display:flex;align-items:center;justify-content:center;min-
 </div>
 
 <div id="hpRow"><div id="hpBar"><div id="hpFill"></div></div></div>
-<div id="livesHeart" style="position:absolute;top:66px;left:8px;right:8px;z-index:20;pointer-events:none;display:flex;gap:1px;letter-spacing:1px;"></div>
+<div style="position:absolute;right:2px;top:44px;z-index:20;pointer-events:none;font-family:'Share Tech Mono',monospace;font-size:7px;color:rgba(255,255,255,0.5);writing-mode:vertical-rl;letter-spacing:1px;">HP</div>
+<div id="livesHeart" style="position:absolute;right:3px;top:58px;z-index:20;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:0px;font-size:8px;"></div>
 <div id="pwRow"></div>
 
 <div id="controls">
@@ -121,15 +122,15 @@ body{background:#111;display:flex;align-items:center;justify-content:center;min-
     <span>VS</span>
     <canvas class="ov-flag" id="ovFlagUSA" width="44" height="28"></canvas>
   </div>
-  <h1>AIR<br>DOMINANCE</h1>
-  <div class="ov-sub">SU-35 · TOTAL AIR SUPERIORITY</div>
+  <h1>SAYANG<br>BORING?</h1>
+  <div class="ov-sub">MAIN LA TEMBAK2 JET AMERICA NI</div>
   <div id="hsBox"><div class="hs-title">TOP ACES</div><div id="hsList"></div></div>
   <div class="pw-legend">
     <b>SHIELD</b> absorb hits &nbsp;|&nbsp; <b>RAPID</b> fast fire &nbsp;|&nbsp; <b>SPREAD</b> 5-way<br>
     <b>MISSILE</b> homing &nbsp;|&nbsp; <b>LASER</b> beam &nbsp;|&nbsp; <b>NUKE</b> screen clear<br>
     <b>SLOW</b> time freeze &nbsp;|&nbsp; <b>GHOST</b> invincible &nbsp;|&nbsp; <b>HP</b> repair
   </div>
-  <button id="startBtn">SCRAMBLE!</button>
+  <button id="startBtn">READY SAYANG!!</button>
 </div>
 <div id="pauseScreen" style="display:flex;display:none">PAUSED</div>
 <div id="nukeFlash"></div>
@@ -168,174 +169,107 @@ function drawUSAFlag(c){
 ['flagIran','ovFlagIran'].forEach(id=>drawIranFlag(document.getElementById(id)));
 ['flagUSA','ovFlagUSA'].forEach(id=>drawUSAFlag(document.getElementById(id)));
 
-// ══ TERRAIN — mobile-safe seamless scrolling ═════════════════════
-// Two offscreen canvases, each exactly screen-sized.
-// We paint into canvas B while displaying canvas A.
-// When B is full, swap. No giant buffers, no getImageData shifting.
-// All terrain is a pure function of worldY so seams are impossible.
-
+// ══ TERRAIN — mobile-safe, strip-painted per frame ═══════════════
 const SCROLL_SPEED = 1.8;
+const T_SPF = 10; // rows painted per frame into next canvas
 
-let tSeed = 1;
-let tScrollY = 0;      // world-Y at top of screen
-let tCanvases = [];    // [0,1] — two offscreen canvases
-let tCtxs = [];
-let tCurIdx = 0;       // which canvas we're currently displaying
-let tCurWY = 0;        // world-Y of the top of tCanvases[tCurIdx]
-let tNextWY = 0;       // world-Y we've painted into tCanvases[1-tCurIdx] so far
-let tReady = false;
+let tSeed=1, tScrollY=0, tCv=[], tCx=[], tCurI=0, tCurWY=0, tNxtP=0, tReady=false;
 
-// ── Noise: pure function, no randomness ─────────────────────────
-function tn(wx, wy){
-  const s = tSeed;
-  return Math.max(0, Math.min(1,
-    Math.sin(wx*0.0095+s*0.7) * Math.cos(wy*0.0072+s*1.3) * 0.38 +
-    Math.sin(wx*0.021 - wy*0.018+s*2.1) * 0.22 +
-    Math.sin(wx*0.006 + wy*0.005+s*0.4) * 0.18 +
-    Math.cos(wx*0.038 + wy*0.031+s*3.7) * 0.12 +
-    Math.sin(wx*0.055 - wy*0.047+s*1.8) * 0.08 +
-    0.52
-  ));
+function tn(wx,wy){
+  const s=tSeed;
+  return Math.max(0,Math.min(1,
+    Math.sin(wx*0.0095+s*0.7)*Math.cos(wy*0.0072+s*1.3)*0.38+
+    Math.sin(wx*0.021-wy*0.018+s*2.1)*0.22+
+    Math.sin(wx*0.006+wy*0.005+s*0.4)*0.18+
+    Math.cos(wx*0.038+wy*0.031+s*3.7)*0.12+
+    Math.sin(wx*0.055-wy*0.047+s*1.8)*0.08+0.52));
 }
 
-// ── Paint a band of rows into a given canvas context ─────────────
-function tPaintRows(tc, startWY, count, destY, cw){
-  if(count <= 0) return;
-  const img = tc.createImageData(cw, count);
-  const d = img.data;
-  const s = tSeed;
-  // Pre-compute river/road X positions per row (cheap sine)
-  const r1cx=cw*0.25, r2cx=cw*0.72, r3cx=cw*0.50;
-  const rd1cx=cw*0.35, rd2cx=cw*0.65;
-
-  for(let row=0; row<count; row++){
-    const wy = startWY + row;
-    const rv1x = r1cx + Math.sin(wy*0.0055+s*1.1)*50;
-    const rv2x = r2cx + Math.sin(wy*0.0042+s*2.3)*40;
-    const rv3x = r3cx + Math.sin(wy*0.0031+s*0.7)*65;
-    const rd1x = rd1cx + Math.sin(wy*0.0038+s*3.2)*18;
-    const rd2x = rd2cx + Math.sin(wy*0.0051+s*1.6)*14;
-    const dashOn = (wy%22)<11;
-
-    for(let bx=0; bx<cw; bx++){
-      let n = tn(bx, wy);
+function tStrip(tc,startWY,rows,destY,cw){
+  if(rows<=0||cw<=0)return;
+  const s=tSeed,img=tc.createImageData(cw,rows),d=img.data;
+  const r1cx=cw*.25,r2cx=cw*.72,r3cx=cw*.50,rd1cx=cw*.35,rd2cx=cw*.65;
+  for(let row=0;row<rows;row++){
+    const wy=startWY+row;
+    const rv1=r1cx+Math.sin(wy*.0055+s*1.1)*50;
+    const rv2=r2cx+Math.sin(wy*.0042+s*2.3)*40;
+    const rv3=r3cx+Math.sin(wy*.0031+s*.7)*65;
+    const rd1=rd1cx+Math.sin(wy*.0038+s*3.2)*18;
+    const rd2=rd2cx+Math.sin(wy*.0051+s*1.6)*14;
+    const dash=(wy%22)<11;
+    for(let bx=0;bx<cw;bx++){
+      const n=tn(bx,wy);
       let r,g,b;
-      if(n<0.28){r=8;g=38;b=110;}
-      else if(n<0.36){r=16;g=72;b=165;}
-      else if(n<0.42){r=32;g=115;b=195;}
-      else if(n<0.46){r=190;g=175;b=110;}
-      else if(n<0.50){r=160;g=155;b=85;}
-      else if(n<0.57){r=55;g=125;b=38;}
-      else if(n<0.65){r=35;g=100;b=22;}
-      else if(n<0.72){r=25;g=80;b=14;}
-      else if(n<0.78){r=70;g=95;b=25;}
-      else if(n<0.84){r=105;g=82;b=45;}
-      else if(n<0.90){r=130;g=108;b=65;}
-      else{r=150;g=140;b=125;}
-
-      // Rivers
-      let dd=Math.abs(bx-rv1x);
-      if(dd<10){const tt=(1-dd/10)**3*0.92;r=r+(18-r)*tt|0;g=g+(88-g)*tt|0;b=b+(180-b)*tt|0;}
-      dd=Math.abs(bx-rv2x);
-      if(dd<9){const tt=(1-dd/9)**3*0.92;r=r+(18-r)*tt|0;g=g+(88-g)*tt|0;b=b+(180-b)*tt|0;}
-      dd=Math.abs(bx-rv3x);
-      if(dd<12){const tt=(1-dd/12)**3*0.88;r=r+(18-r)*tt|0;g=g+(88-g)*tt|0;b=b+(180-b)*tt|0;}
-
-      // Roads (only on land)
-      if(n>0.44&&n<0.88){
-        dd=Math.abs(bx-rd1x);
-        if(dd<5){const tt=(1-dd/5)**2;r=r+(82-r)*tt|0;g=r;b=r+4;if(dd<1.2&&dashOn){r=210;g=205;b=140;}}
-        dd=Math.abs(bx-rd2x);
-        if(dd<5){const tt=(1-dd/5)**2;r=r+(82-r)*tt|0;g=r;b=r+4;if(dd<1.2&&dashOn){r=210;g=205;b=140;}}
+      if(n<.28){r=8;g=38;b=110;}else if(n<.36){r=16;g=72;b=165;}
+      else if(n<.42){r=32;g=115;b=195;}else if(n<.46){r=190;g=175;b=110;}
+      else if(n<.50){r=160;g=155;b=85;}else if(n<.57){r=55;g=125;b=38;}
+      else if(n<.65){r=35;g=100;b=22;}else if(n<.72){r=25;g=80;b=14;}
+      else if(n<.78){r=70;g=95;b=25;}else if(n<.84){r=105;g=82;b=45;}
+      else if(n<.90){r=130;g=108;b=65;}else{r=150;g=140;b=125;}
+      let dd=Math.abs(bx-rv1);if(dd<10){const t=(1-dd/10)**3*.92;r=r+(18-r)*t|0;g=g+(88-g)*t|0;b=b+(185-b)*t|0;}
+      dd=Math.abs(bx-rv2);if(dd<9){const t=(1-dd/9)**3*.92;r=r+(18-r)*t|0;g=g+(88-g)*t|0;b=b+(185-b)*t|0;}
+      dd=Math.abs(bx-rv3);if(dd<12){const t=(1-dd/12)**3*.88;r=r+(18-r)*t|0;g=g+(88-g)*t|0;b=b+(185-b)*t|0;}
+      if(n>.44&&n<.88){
+        dd=Math.abs(bx-rd1);if(dd<5){const t=(1-dd/5)**2,gr=82*t+r*(1-t)|0;r=gr;g=gr;b=gr+4;if(dd<1.2&&dash){r=210;g=205;b=140;}}
+        dd=Math.abs(bx-rd2);if(dd<5){const t=(1-dd/5)**2,gr=82*t+r*(1-t)|0;r=gr;g=gr;b=gr+4;if(dd<1.2&&dash){r=210;g=205;b=140;}}
       }
-
-      // Water sparkle
-      if(n<0.42&&Math.sin(bx*0.31+wy*0.67+s)>0.85){r=Math.min(255,r+40);g=Math.min(255,g+30);b=Math.min(255,b+18);}
-      // Snow
-      if(n>0.88){const sv=(Math.sin(bx*0.7+wy*0.6)*0.3+0.7)*0.45;r=r+(215-r)*sv|0;g=g+(213-g)*sv|0;b=b+(210-b)*sv|0;}
-      // Forest
-      const fd=tn(bx*0.6+400,wy*0.6+300);
-      if(n>0.52&&n<0.76&&fd>0.63){const ft=Math.min(1,(fd-0.63)/0.14);r=r+(12-r)*ft*0.75|0;g=g+(62-g)*ft*0.75|0;b=b+(8-b)*ft*0.75|0;}
-      // City
-      const cb=tn(bx*0.4+800,wy*0.4+600);
-      if(n>0.50&&n<0.82&&cb>0.69){
-        const ct=Math.min(1,(cb-0.69)/0.11);
-        const bxm=bx%16,wym=wy%16;
-        if(bxm>2&&bxm<13&&wym>2&&wym<13){
-          r=r+(48-r)*ct*0.85|0;g=g+(50-g)*ct*0.85|0;b=b+(55-b)*ct*0.85|0;
-          if(bxm>4&&bxm<10&&wym>4&&wym<10&&bxm%4<2&&wym%4<2){r=r+(210-r)*ct*0.7|0;g=g+(190-g)*ct*0.7|0;b=b+(88-b)*ct*0.7|0;}
-        } else {r=r+(72-r)*ct*0.38|0;g=g+(72-g)*ct*0.38|0;b=b+(72-b)*ct*0.38|0;}
-      }
-
-      const pi=(row*cw+bx)*4;
-      d[pi]=r;d[pi+1]=g;d[pi+2]=b;d[pi+3]=255;
+      if(n<.42&&Math.sin(bx*.31+wy*.67+s)>.85){r=Math.min(255,r+38);g=Math.min(255,g+28);b=Math.min(255,b+18);}
+      if(n>.88){const sv=(Math.sin(bx*.7+wy*.6)*.3+.7)*.45;r=r+(215-r)*sv|0;g=g+(213-g)*sv|0;b=b+(210-b)*sv|0;}
+      const fd=tn(bx*.6+400,wy*.6+300);
+      if(n>.52&&n<.76&&fd>.63){const ft=Math.min(1,(fd-.63)/.14)*.75;r=r+(12-r)*ft|0;g=g+(62-g)*ft|0;b=b+(8-b)*ft|0;}
+      const cb=tn(bx*.4+800,wy*.4+600);
+      if(n>.50&&n<.82&&cb>.69){const ct=Math.min(1,(cb-.69)/.11),bxm=bx%16,wym=wy%16;
+        if(bxm>2&&bxm<13&&wym>2&&wym<13){r=r+(48-r)*ct*.85|0;g=g+(50-g)*ct*.85|0;b=b+(55-b)*ct*.85|0;
+          if(bxm>4&&bxm<10&&wym>4&&wym<10&&bxm%4<2&&wym%4<2){r=r+(210-r)*ct*.7|0;g=g+(190-g)*ct*.7|0;b=b+(88-b)*ct*.7|0;}
+        }else{r=r+(72-r)*ct*.38|0;g=g+(72-g)*ct*.38|0;b=b+(72-b)*ct*.38|0;}}
+      const pi=(row*cw+bx)*4;d[pi]=r;d[pi+1]=g;d[pi+2]=b;d[pi+3]=255;
     }
   }
-  tc.putImageData(img, 0, destY);
+  tc.putImageData(img,0,destY);
 }
 
 function initTerrain(){
-  tSeed = 1+(Math.random()*899)|0;
-  tScrollY = 0; tCurWY = 0; tCurIdx = 0; tReady = false;
-  const cw = W()||480, ch = H()||780;
-
-  // Create two screen-sized canvases
-  tCanvases = []; tCtxs = [];
+  tSeed=1+(Math.random()*899)|0;
+  tReady=false;
+  const cw=W()||480,ch=H()||780;
+  tCv=[];tCx=[];
   for(let i=0;i<2;i++){
-    const c = document.createElement('canvas');
-    c.width = cw; c.height = ch;
-    tCanvases.push(c);
-    tCtxs.push(c.getContext('2d'));
+    const c=document.createElement('canvas');
+    c.width=cw;c.height=ch;
+    tCv.push(c);tCx.push(c.getContext('2d',{willReadFrequently:false}));
   }
-
-  // Paint canvas 0 fully (world rows 0..ch)
-  tPaintRows(tCtxs[0], 0, ch, 0, cw);
-  tCurWY = 0;
-
-  // Start painting canvas 1 (world rows ch..2ch) — will finish lazily
-  tNextWY = ch;
-  tPaintRows(tCtxs[1], ch, ch, 0, cw);
-
-  tReady = true;
+  // Start worldY high — we scroll downward (decreasing worldY) for bottom-to-top feel
+  const startWY=99999;
+  tScrollY=startWY; tCurWY=startWY; tCurI=0; tNxtP=0;
+  // Paint first canvas: worldY rows startWY .. startWY+ch (what's on screen at start)
+  for(let y=0;y<ch;y+=T_SPF) tStrip(tCx[0],startWY+y,Math.min(T_SPF,ch-y),y,cw);
+  tReady=true;
 }
 
-// Rows painted into next canvas so far
-let tNextPainted = 0;
-
 function drawTerrain(){
-  if(!tReady) return;
-  const cw=W(), ch=H();
-  const cur = tCanvases[tCurIdx];
-  const next = tCanvases[1-tCurIdx];
-  const nextCtx = tCtxs[1-tCurIdx];
-
-  // How many px have we scrolled since cur canvas started
-  const scrolledInCur = tScrollY - tCurWY;
-
-  // Draw current canvas offset upward by scrolledInCur
-  ctx.drawImage(cur, 0, -scrolledInCur);
-
-  // If we've scrolled past the midpoint of cur, start showing next canvas below
-  if(scrolledInCur > 0){
-    ctx.drawImage(next, 0, ch - scrolledInCur);
+  if(!tReady)return;
+  const cw=W(),ch=H(),nI=1-tCurI;
+  // Next canvas covers world rows above current (higher worldY = further back = top of screen)
+  const nWY=tCurWY+ch;
+  if(tNxtP<ch){
+    const rows=Math.min(T_SPF,ch-tNxtP);
+    tStrip(tCx[nI],nWY+tNxtP,rows,tNxtP,cw);
+    tNxtP+=rows;
   }
-
-  // When we've scrolled a full canvas height, swap
-  if(scrolledInCur >= ch){
-    tCurIdx = 1 - tCurIdx;
-    tCurWY += ch;
-    // Repaint the old canvas (now the "next" slot) with upcoming rows
-    const newNextWY = tCurWY + ch;
-    tPaintRows(tCtxs[1-tCurIdx], newNextWY, ch, 0, cw);
-  }
-
-  tScrollY += SCROLL_SPEED;
+  // sc = how far we've scrolled past the start of current canvas
+  const sc=tScrollY-tCurWY;
+  // Bottom-to-top: current canvas bottom aligns with screen bottom, scrolling up
+  // At sc=0: current fills screen exactly. As sc grows, current moves up, next peeks below.
+  ctx.drawImage(tCv[tCurI],0,-sc);
+  ctx.drawImage(tCv[nI],0,ch-sc);
+  if(sc>=ch){tCurI=nI;tCurWY+=ch;tNxtP=0;}
+  tScrollY+=SCROLL_SPEED;
 }
 
 // ══ GAME STATE ═══════════════════════════════════════════════════
 let score=0,hiScore=0,wave=1,running=false,paused=false,gameOver=false;
 let playerHP=1000,playerMaxHP=1000;
-let highScores=JSON.parse(localStorage.getItem('airDomHS')||'[]');
+let highScores=(JSON.parse(localStorage.getItem('airDomHS')||'[]')).map(e=>typeof e==='number'?{n:'ACE',s:e}:e);
 
 // Power-ups: timers in ms
 let PW={shield:0,rapid:0,spread:0,missile:0,laser:0,slow:0,ghost:0};
@@ -793,21 +727,65 @@ function firePlayer(){
 function endGame(win){
   running=false;
   hiScore=Math.max(hiScore,score);
-  highScores.push(score);highScores.sort((a,b)=>b-a);highScores=highScores.slice(0,5);
-  localStorage.setItem('airDomHS',JSON.stringify(highScores));
+
+  // Check if score makes top 5
+  const qualifies = highScores.length<5 || score>highScores[highScores.length-1].s;
+
   const ov=document.getElementById('overlay');ov.innerHTML='';
   const t=document.createElement('h1');t.textContent=win?'VICTORY':'SHOT DOWN';t.style.color=win?'#ffcc44':'#ff4455';
-  const sub=document.createElement('div');sub.className='ov-sub';sub.textContent=win?'MISSION ACCOMPLISHED — AIRSPACE CLEARED':'EJECTING — MISSION FAILED';
-  const sc=document.createElement('div');sc.className='ov-score';sc.textContent='SCORE: '+score;
-  const hs=makeHSEl();
-  const btn=document.createElement('button');btn.id='startBtn';btn.textContent='FLY AGAIN';btn.onclick=startGame;
-  ov.append(t,sub,sc,hs,btn);ov.style.display='flex';
+  const sub=document.createElement('div');sub.className='ov-sub';sub.textContent=win?'MISSION ACCOMPLISHED':'EJECTING — MISSION FAILED';
+  const sc2=document.createElement('div');sc2.className='ov-score';sc2.textContent='SCORE: '+score;
+  ov.append(t,sub,sc2);
+
+  if(qualifies){
+    const nameWrap=document.createElement('div');
+    nameWrap.style.cssText='display:flex;flex-direction:column;align-items:center;gap:8px;margin:8px 0;';
+    const lbl=document.createElement('div');
+    lbl.style.cssText='font-family:"Share Tech Mono",monospace;font-size:11px;color:#ffcc44;letter-spacing:2px;';
+    lbl.textContent='NEW TOP ACE — ENTER CALLSIGN:';
+    const inp=document.createElement('input');
+    inp.id='nameInp';inp.maxLength=12;inp.placeholder='CALLSIGN';
+    inp.style.cssText='background:rgba(0,0,0,0.5);border:1px solid #ffcc44;color:#fff;font-family:"Bebas Neue",sans-serif;font-size:18px;letter-spacing:3px;padding:6px 12px;text-align:center;width:160px;outline:none;';
+    nameWrap.append(lbl,inp);
+    ov.appendChild(nameWrap);
+
+    const confirmBtn=document.createElement('button');
+    confirmBtn.id='startBtn';confirmBtn.textContent='CONFIRM';
+    confirmBtn.onclick=()=>{
+      const name=(inp.value.trim().toUpperCase()||'UNKNOWN').substring(0,12);
+      highScores.push({n:name,s:score});
+      highScores.sort((a,b)=>b.s-a.s);
+      highScores=highScores.slice(0,5);
+      localStorage.setItem('airDomHS',JSON.stringify(highScores));
+      ov.innerHTML='';
+      const hs=makeHSEl(score);
+      const btn2=document.createElement('button');btn2.id='startBtn';btn2.textContent='FLY AGAIN';btn2.onclick=startGame;
+      ov.append(hs,btn2);
+    };
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter')confirmBtn.click();});
+    ov.appendChild(confirmBtn);
+    setTimeout(()=>inp.focus(),100);
+  } else {
+    highScores.push({n:'—',s:score});
+    highScores.sort((a,b)=>b.s-a.s);
+    highScores=highScores.slice(0,5);
+    localStorage.setItem('airDomHS',JSON.stringify(highScores));
+    const hs=makeHSEl(score);
+    const btn=document.createElement('button');btn.id='startBtn';btn.textContent='FLY AGAIN';btn.onclick=startGame;
+    ov.append(hs,btn);
+  }
+  ov.style.display='flex';
 }
 
-function makeHSEl(){
+function makeHSEl(highlight){
   const d=document.createElement('div');d.id='hsBox';
   const tl=document.createElement('div');tl.className='hs-title';tl.textContent='TOP ACES';d.appendChild(tl);
-  highScores.forEach((s,i)=>{const r=document.createElement('div');r.className='hs-row';r.innerHTML=`<span>${i+1}.</span><span>${s}</span>`;d.appendChild(r);});
+  highScores.forEach((e,i)=>{
+    const r=document.createElement('div');r.className='hs-row';
+    if(highlight!==undefined&&e.s===highlight) r.style.color='#ffcc44';
+    r.innerHTML=`<span>${i+1}.</span><span style="min-width:90px">${e.n||'—'}</span><span>${e.s}</span>`;
+    d.appendChild(r);
+  });
   return d;
 }
 
@@ -817,8 +795,8 @@ function updateHUD(dt){
   document.getElementById('waveVal').textContent=wave;
   document.getElementById('hiVal').textContent=Math.max(hiScore,score);
   const pct=playerHP/playerMaxHP;
-  document.getElementById('hpFill').style.width=(pct*100)+'%';
-  document.getElementById('hpFill').style.background=pct>0.5?'linear-gradient(90deg,#44cc44,#88ff44)':pct>0.25?'linear-gradient(90deg,#ffaa00,#ffcc44)':'linear-gradient(90deg,#ff2222,#ff6633)';
+  document.getElementById('hpFill').style.height=(pct*100)+'%';
+  document.getElementById('hpFill').style.background=pct>0.5?'linear-gradient(0deg,#44cc44,#88ff44)':pct>0.25?'linear-gradient(0deg,#ffaa00,#ffcc44)':'linear-gradient(0deg,#ff2222,#ff6633)';
   // Lives hearts (each = 100 HP)
   const lives=Math.ceil(playerHP/100);
   const heartsEl=document.getElementById('livesHeart');
@@ -908,7 +886,7 @@ function loop(ts){
         const px=player.x+player.w/2,py=player.y+player.h/2;
         const ex=e.x+e.w/2,ey=e.y+e.h;
         const dx=px-ex,dy=py-ey,dist=Math.sqrt(dx*dx+dy*dy);
-        [-1,0,1].forEach(off=>{eBullets.push({x:ex+off*25,y:ey,vx:dx/dist*1.5+off*0.8,vy:dy/dist*1.5+1.2,boss:true});});
+        [-1,0,1].forEach(off=>{eBullets.push({x:ex+off*25,y:ey,vx:dx/dist*1.6+off*0.8,vy:dy/dist*1.6+1.2,boss:true});});
       }
     } else {
       if(wallHit&&!e._wallBounced){e.dx*=-1;e.y+=14;e._wallBounced=true;}
@@ -920,7 +898,7 @@ function loop(ts){
         const px=player.x+player.w/2,py=player.y;
         const ex=e.x+e.w/2,ey=e.y+e.h;
         const dx=px-ex,dy=py-ey,dist=Math.sqrt(dx*dx+dy*dy);
-        eBullets.push({x:ex,y:ey,vx:dx/dist*1.2,vy:dy/dist*1.2+0.9});
+        eBullets.push({x:ex,y:ey,vx:dx/dist*1.6,vy:dy/dist*1.6+0.9});
       }
     }
   });
@@ -968,7 +946,7 @@ function loop(ts){
       d.y=9999;
       if(d.type==='hp'){playerHP=Math.min(playerMaxHP,playerHP+100);boom(d.x,d.y,'#ff5566');}
       else if(d.type==='nuke'){nukeReady=1;}
-      else PW[d.type]=(d.type==='shield'?9000:d.type==='ghost'?5000:d.type==='slow'?7000:6000);
+      else PW[d.type]=(d.type==='shield'?15000:d.type==='ghost'?10000:d.type==='slow'?12000:10000);
       boom(d.x,d.y,false);
     }
   });
@@ -1051,7 +1029,7 @@ function startGame(){
 // Init
 function initHSList(){
   const el=document.getElementById('hsList');if(!el)return;
-  highScores.forEach((s,i)=>{const r=document.createElement('div');r.className='hs-row';r.innerHTML=`<span>${i+1}.</span><span>${s}</span>`;el.appendChild(r);});
+  highScores.forEach((e,i)=>{const r=document.createElement('div');r.className='hs-row';r.innerHTML=`<span>${i+1}.</span><span style="min-width:90px">${e.n||'—'}</span><span>${e.s||e}</span>`;el.appendChild(r);});
 }
 document.getElementById('startBtn').onclick=startGame;
 initHSList();

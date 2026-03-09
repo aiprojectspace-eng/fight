@@ -2,124 +2,76 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Pro-Level Humanoid Kinematics</title>
+    <title>Realistic Human Import (No Sprites, Real 3D)</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #111; overflow: hidden; }
     </style>
 </head>
 <body>
     <script type="importmap">
-        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
     </script>
 
     <script type="module">
         import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+        // 1. Scene Setup
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // Lighting (Cinematic Studio Setup)
-        const light = new THREE.DirectionalLight(0xffffff, 2);
-        light.position.set(2, 5, 5);
-        scene.add(light);
-        const backLight = new THREE.PointLight(0xff0044, 10, 10);
-        backLight.position.set(-2, 2, -2);
-        scene.add(backLight);
+        // Controls supaya kau boleh pusing-pusing tengok model
+        const controls = new OrbitControls(camera, renderer.domElement);
 
-        const mat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.2, metalness: 0.8 });
+        // 2. Lighting (Penting untuk model realistik)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
+        directionalLight.position.set(2, 2, 5);
+        scene.add(directionalLight);
 
-        // Helper: Buat Joint (Sfera kecik)
-        const createJoint = () => new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 16), mat);
-        
-        // Helper: Buat Bone (Capsule yang tapered)
-        const createBone = (height, radius) => {
-            const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, height, 10, 20), mat);
-            mesh.position.y = -height/2; // Pivot kat atas
-            return mesh;
-        };
+        // 3. LOAD REAL HUMAN MODEL (The Fix!)
+        const loader = new GLTFLoader();
+        let mixer; // Untuk animasi
 
-        const body = new THREE.Group();
+        // Kau kena cari fail .glb manusia yang cantik dan letak dalam folder projek kau
+        loader.load( 'path/to/your/human_model.glb', function ( gltf ) {
+            const model = gltf.scene;
+            scene.add( model );
 
-        // 1. Torso & Hips
-        const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.5, 10, 20), mat);
-        chest.scale.set(1.5, 1, 0.8);
-        chest.position.y = 1.4;
-        body.add(chest);
+            // Kalau model tu ada animasi siap-siap (macam walking/punching)
+            mixer = new THREE.AnimationMixer( model );
+            const clips = gltf.animations;
+            if (clips.length > 0) {
+                const action = mixer.clipAction( clips[0] ); // Main animasi pertama
+                action.play();
+            }
 
-        // 2. Head (Anatomical Ovoid)
-        const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 32, 32), mat);
-        head.scale.set(0.85, 1.1, 1);
-        head.position.y = 0.45; // Relative to chest
-        chest.add(head);
+        }, undefined, function ( error ) {
+            console.error( 'Alamak, model tak lepas load:', error );
+        } );
 
-        // 3. ARM SYSTEM (Shoulder -> Elbow -> Hand)
-        function buildArm(side) {
-            const shoulder = createJoint();
-            shoulder.position.set(side * 0.4, 0.25, 0);
-            
-            const upperArm = createBone(0.4, 0.07);
-            shoulder.add(upperArm);
-            
-            const elbow = createJoint();
-            elbow.position.y = -0.45;
-            upperArm.add(elbow);
-            
-            const lowerArm = createBone(0.4, 0.05);
-            elbow.add(lowerArm);
-            
-            return { shoulder, elbow };
-        }
+        camera.position.set(0, 1.6, 3);
+        controls.update();
 
-        const leftArm = buildArm(1);
-        const rightArm = buildArm(-1);
-        chest.add(leftArm.shoulder, rightArm.shoulder);
-
-        // 4. LEG SYSTEM (Hip -> Knee -> Foot)
-        function buildLeg(side) {
-            const hip = createJoint();
-            hip.position.set(side * 0.2, -0.3, 0);
-            
-            const thigh = createBone(0.5, 0.1);
-            hip.add(thigh);
-            
-            const knee = createJoint();
-            knee.position.y = -0.55;
-            thigh.add(knee);
-            
-            const calf = createBone(0.5, 0.07);
-            knee.add(calf);
-            
-            return { hip, knee };
-        }
-
-        const leftLeg = buildLeg(1);
-        const rightLeg = buildLeg(-1);
-        chest.add(leftLeg.hip, rightLeg.hip);
-
-        scene.add(body);
-        camera.position.set(0, 1.5, 4);
-
-        // Animation Loop (Natural Walking/Combat Stance)
+        // 4. Animation Loop
+        const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
-            const t = Date.now() * 0.004;
-
-            // Shoulder rotation
-            leftArm.shoulder.rotation.x = Math.sin(t) * 0.5;
-            rightArm.shoulder.rotation.x = -Math.sin(t) * 0.5;
-
-            // ELBOW FLEXING (This is what you wanted!)
-            leftArm.elbow.rotation.x = Math.abs(Math.cos(t)) * 1.2;
-            rightArm.elbow.rotation.x = Math.abs(Math.sin(t)) * 1.2;
-
-            // Knee flexing
-            leftLeg.knee.rotation.x = Math.abs(Math.sin(t)) * 0.8;
-            rightLeg.knee.rotation.x = Math.abs(Math.cos(t)) * 0.8;
-
-            body.rotation.y += 0.01;
+            
+            // Update animasi model
+            if (mixer) mixer.update(clock.getDelta());
+            
+            controls.update();
             renderer.render(scene, camera);
         }
         animate();

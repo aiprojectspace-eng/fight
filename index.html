@@ -121,15 +121,15 @@ body{background:#111;display:flex;align-items:center;justify-content:center;min-
     <span>VS</span>
     <canvas class="ov-flag" id="ovFlagUSA" width="44" height="28"></canvas>
   </div>
-  <h1>WORLD WAR 3<br>IRAN VS USA: JET FIGHT</h1>
-  <div class="ov-sub">KASI LETUP JET AMERIKA</div>
+  <h1>AIR<br>DOMINANCE</h1>
+  <div class="ov-sub">SU-35 · TOTAL AIR SUPERIORITY</div>
   <div id="hsBox"><div class="hs-title">TOP ACES</div><div id="hsList"></div></div>
   <div class="pw-legend">
     <b>SHIELD</b> absorb hits &nbsp;|&nbsp; <b>RAPID</b> fast fire &nbsp;|&nbsp; <b>SPREAD</b> 5-way<br>
     <b>MISSILE</b> homing &nbsp;|&nbsp; <b>LASER</b> beam &nbsp;|&nbsp; <b>NUKE</b> screen clear<br>
     <b>SLOW</b> time freeze &nbsp;|&nbsp; <b>GHOST</b> invincible &nbsp;|&nbsp; <b>HP</b> repair
   </div>
-  <button id="startBtn">READY TO FLY</button>
+  <button id="startBtn">SCRAMBLE!</button>
 </div>
 <div id="pauseScreen" style="display:flex;display:none">PAUSED</div>
 <div id="nukeFlash"></div>
@@ -168,281 +168,167 @@ function drawUSAFlag(c){
 ['flagIran','ovFlagIran'].forEach(id=>drawIranFlag(document.getElementById(id)));
 ['flagUSA','ovFlagUSA'].forEach(id=>drawUSAFlag(document.getElementById(id)));
 
-// ══ TERRAIN ENGINE — vector-drawn chunks, smooth & fast ══════════
-// Each chunk is painted with canvas shapes (gradients, beziers, fills).
-// ══ TERRAIN — seamless infinite scrolling, no chunk seams ════════
-// Single large offscreen canvas, painted top-to-bottom using world-Y.
-// All terrain features are pure functions of world-Y — no per-chunk seeds.
-// Each frame: just one drawImage call with a Y offset.
+// ══ TERRAIN — mobile-safe seamless scrolling ═════════════════════
+// Two offscreen canvases, each exactly screen-sized.
+// We paint into canvas B while displaying canvas A.
+// When B is full, swap. No giant buffers, no getImageData shifting.
+// All terrain is a pure function of worldY so seams are impossible.
 
 const SCROLL_SPEED = 1.8;
-const TBUF_H = 1400;
-const TBUF_REFILL = 600;
 
-let tBuf = null, tBufCtx = null;
-let tScrollY = 0;
-let tPaintedTo = 0;
 let tSeed = 1;
+let tScrollY = 0;      // world-Y at top of screen
+let tCanvases = [];    // [0,1] — two offscreen canvases
+let tCtxs = [];
+let tCurIdx = 0;       // which canvas we're currently displaying
+let tCurWY = 0;        // world-Y of the top of tCanvases[tCurIdx]
+let tNextWY = 0;       // world-Y we've painted into tCanvases[1-tCurIdx] so far
+let tReady = false;
 
-// ── Continuous noise: pure function of (wx, wy) ──────────────────
-// Returns 0..1. Uses layered sines with irrational frequencies so it
-// never repeats within any reasonable play session.
+// ── Noise: pure function, no randomness ─────────────────────────
 function tn(wx, wy){
   const s = tSeed;
   return Math.max(0, Math.min(1,
-    Math.sin(wx * 0.0095 + s * 0.7) * Math.cos(wy * 0.0072 + s * 1.3) * 0.38 +
-    Math.sin(wx * 0.021  - wy * 0.018 + s * 2.1) * 0.22 +
-    Math.sin(wx * 0.006  + wy * 0.005 + s * 0.4) * 0.18 +
-    Math.cos(wx * 0.038  + wy * 0.031 + s * 3.7) * 0.12 +
-    Math.sin(wx * 0.055  - wy * 0.047 + s * 1.8) * 0.08 +
+    Math.sin(wx*0.0095+s*0.7) * Math.cos(wy*0.0072+s*1.3) * 0.38 +
+    Math.sin(wx*0.021 - wy*0.018+s*2.1) * 0.22 +
+    Math.sin(wx*0.006 + wy*0.005+s*0.4) * 0.18 +
+    Math.cos(wx*0.038 + wy*0.031+s*3.7) * 0.12 +
+    Math.sin(wx*0.055 - wy*0.047+s*1.8) * 0.08 +
     0.52
   ));
 }
 
-// ── Colour from noise value ───────────────────────────────────────
-function tcol(n, wx, wy){
-  // smooth colour blend across zones
-  let r,g,b;
-  if(n < 0.28){       r=8;  g=38; b=110; }  // deep ocean
-  else if(n < 0.36){  r=16; g=72; b=165; }  // ocean
-  else if(n < 0.42){  r=32; g=115;b=195; }  // shallow sea
-  else if(n < 0.46){  r=190;g=175;b=110; }  // beach sand
-  else if(n < 0.50){  r=160;g=155;b=85;  }  // dry sand
-  else if(n < 0.57){  r=55; g=125;b=38;  }  // light grass
-  else if(n < 0.65){  r=35; g=100;b=22;  }  // grass
-  else if(n < 0.72){  r=25; g=80; b=14;  }  // dark grass
-  else if(n < 0.78){  r=70; g=95; b=25;  }  // scrub
-  else if(n < 0.84){  r=105;g=82; b=45;  }  // dirt
-  else if(n < 0.90){  r=130;g=108;b=65;  }  // rock
-  else{               r=150;g=140;b=125; }   // mountain
-
-  // Smooth blend with neighbour sample to avoid banding
-  const n2 = tn(wx+2, wy+1);
-  const t = 0.18;
-  let r2,g2,b2;
-  if(n2<0.28){r2=8;g2=38;b2=110;}
-  else if(n2<0.36){r2=16;g2=72;b2=165;}
-  else if(n2<0.42){r2=32;g2=115;b2=195;}
-  else if(n2<0.46){r2=190;g2=175;b2=110;}
-  else if(n2<0.50){r2=160;g2=155;b2=85;}
-  else if(n2<0.57){r2=55;g2=125;b2=38;}
-  else if(n2<0.65){r2=35;g2=100;b2=22;}
-  else if(n2<0.72){r2=25;g2=80;b2=14;}
-  else if(n2<0.78){r2=70;g2=95;b2=25;}
-  else if(n2<0.84){r2=105;g2=82;b2=45;}
-  else if(n2<0.90){r2=130;g2=108;b2=65;}
-  else{r2=150;g2=140;b2=125;}
-  r=r+(r2-r)*t; g=g+(g2-g)*t; b=b+(b2-b)*t;
-
-  return [r|0, g|0, b|0];
-}
-
-// ── Feature overlays (rivers, roads) — pure functions of world-Y ──
-// Returns array of {type,x,w} for a given world-Y row
-function tFeatsAt(wy){
-  const cw = W()||480;
-  const feats = [];
-  // Rivers: 3 rivers, each defined by a sine path
-  const riverDefs = [
-    { cx: cw*0.25, amp:50, fr:0.0055, ph: tSeed*1.1 },
-    { cx: cw*0.72, amp:40, fr:0.0042, ph: tSeed*2.3 },
-    { cx: cw*0.50, amp:65, fr:0.0031, ph: tSeed*0.7 },
-  ];
-  for(const rd of riverDefs){
-    const rx = rd.cx + Math.sin(wy*rd.fr + rd.ph)*rd.amp;
-    feats.push({type:'river', x:rx, w:10});
-  }
-  // Roads: 2 roads
-  const roadDefs = [
-    { cx: cw*0.35, amp:18, fr:0.0038, ph: tSeed*3.2 },
-    { cx: cw*0.65, amp:14, fr:0.0051, ph: tSeed*1.6 },
-  ];
-  for(const rd of roadDefs){
-    const rx = rd.cx + Math.sin(wy*rd.fr + rd.ph)*rd.amp;
-    feats.push({type:'road', x:rx, w:6});
-  }
-  return feats;
-}
-
-// ── Paint a horizontal band into tBuf ────────────────────────────
-// fromWY..toWY are world-Y coordinates (0 = game start, increases downward in world)
-// In buffer coords: bufY = toWY - fromWY (paint downward into buffer)
-function tPaintBand(fromWY, toWY){
-  const cw = W()||480;
-  const bandH = toWY - fromWY;
-  if(bandH <= 0) return;
-
-  const img = tBufCtx.createImageData(cw, bandH);
+// ── Paint a band of rows into a given canvas context ─────────────
+function tPaintRows(tc, startWY, count, destY, cw){
+  if(count <= 0) return;
+  const img = tc.createImageData(cw, count);
   const d = img.data;
+  const s = tSeed;
+  // Pre-compute river/road X positions per row (cheap sine)
+  const r1cx=cw*0.25, r2cx=cw*0.72, r3cx=cw*0.50;
+  const rd1cx=cw*0.35, rd2cx=cw*0.65;
 
-  for(let by = 0; by < bandH; by++){
-    const wy = fromWY + by;
-    const feats = tFeatsAt(wy);
+  for(let row=0; row<count; row++){
+    const wy = startWY + row;
+    const rv1x = r1cx + Math.sin(wy*0.0055+s*1.1)*50;
+    const rv2x = r2cx + Math.sin(wy*0.0042+s*2.3)*40;
+    const rv3x = r3cx + Math.sin(wy*0.0031+s*0.7)*65;
+    const rd1x = rd1cx + Math.sin(wy*0.0038+s*3.2)*18;
+    const rd2x = rd2cx + Math.sin(wy*0.0051+s*1.6)*14;
+    const dashOn = (wy%22)<11;
 
-    for(let bx = 0; bx < cw; bx++){
+    for(let bx=0; bx<cw; bx++){
       let n = tn(bx, wy);
-      let [r,g,b] = tcol(n, bx, wy);
+      let r,g,b;
+      if(n<0.28){r=8;g=38;b=110;}
+      else if(n<0.36){r=16;g=72;b=165;}
+      else if(n<0.42){r=32;g=115;b=195;}
+      else if(n<0.46){r=190;g=175;b=110;}
+      else if(n<0.50){r=160;g=155;b=85;}
+      else if(n<0.57){r=55;g=125;b=38;}
+      else if(n<0.65){r=35;g=100;b=22;}
+      else if(n<0.72){r=25;g=80;b=14;}
+      else if(n<0.78){r=70;g=95;b=25;}
+      else if(n<0.84){r=105;g=82;b=45;}
+      else if(n<0.90){r=130;g=108;b=65;}
+      else{r=150;g=140;b=125;}
 
-      // Apply features
-      for(const f of feats){
-        const dd = Math.abs(bx - f.x);
-        if(f.type === 'river' && dd < f.w){
-          const t = (1 - dd/f.w); const tt = t*t*t;
-          r = r+(18-r)*tt*0.92 |0;
-          g = g+(88-g)*tt*0.92 |0;
-          b = b+(180-b)*tt*0.92 |0;
-          // Shore foam
-          if(dd > f.w*0.75){ r=r+30|0; g=g+30|0; b=b+25|0; }
-        } else if(f.type === 'road' && n > 0.44 && n < 0.88 && dd < f.w){
-          const t = (1 - dd/f.w); const tt = t*t;
-          r = r+(82-r)*tt*0.82 |0;
-          g = r;
-          b = r+(4)|0;
-          // Dashed centre line
-          if(dd < 1.2 && (wy%22) < 11){ r=210; g=205; b=140; }
-        }
+      // Rivers
+      let dd=Math.abs(bx-rv1x);
+      if(dd<10){const tt=(1-dd/10)**3*0.92;r=r+(18-r)*tt|0;g=g+(88-g)*tt|0;b=b+(180-b)*tt|0;}
+      dd=Math.abs(bx-rv2x);
+      if(dd<9){const tt=(1-dd/9)**3*0.92;r=r+(18-r)*tt|0;g=g+(88-g)*tt|0;b=b+(180-b)*tt|0;}
+      dd=Math.abs(bx-rv3x);
+      if(dd<12){const tt=(1-dd/12)**3*0.88;r=r+(18-r)*tt|0;g=g+(88-g)*tt|0;b=b+(180-b)*tt|0;}
+
+      // Roads (only on land)
+      if(n>0.44&&n<0.88){
+        dd=Math.abs(bx-rd1x);
+        if(dd<5){const tt=(1-dd/5)**2;r=r+(82-r)*tt|0;g=r;b=r+4;if(dd<1.2&&dashOn){r=210;g=205;b=140;}}
+        dd=Math.abs(bx-rd2x);
+        if(dd<5){const tt=(1-dd/5)**2;r=r+(82-r)*tt|0;g=r;b=r+4;if(dd<1.2&&dashOn){r=210;g=205;b=140;}}
       }
 
       // Water sparkle
-      if(n < 0.42 && Math.sin(bx*0.31 + wy*0.67 + tSeed) > 0.84){
-        r=Math.min(255,r+45); g=Math.min(255,g+35); b=Math.min(255,b+20);
-      }
-      // Snow cap
-      if(n > 0.88){
-        const s = (Math.sin(bx*0.7+wy*0.6)*0.3+0.7)*0.5;
-        r = r+(215-r)*s |0; g = g+(213-g)*s |0; b = b+(210-b)*s |0;
-      }
-
-      // Forest patch overlay (radial, using hash for position)
-      // Pre-baked: sample a "forest density" channel
-      const fd = tn(bx*0.6+400, wy*0.6+300);
-      if(n > 0.52 && n < 0.76 && fd > 0.62){
-        const ft = Math.min(1,(fd-0.62)/0.15);
-        r = r+(12-r)*ft*0.8 |0;
-        g = g+(62-g)*ft*0.8 |0;
-        b = b+(8-b)*ft*0.8  |0;
-      }
-
-      // City block overlay
-      const cb = tn(bx*0.4+800, wy*0.4+600);
-      if(n > 0.50 && n < 0.82 && cb > 0.68){
-        const ct = Math.min(1,(cb-0.68)/0.12);
-        const bxm = bx%16, wym = wy%16;
-        if(bxm>2&&bxm<13&&wym>2&&wym<13){
-          r = r+(48-r)*ct*0.85 |0; g = g+(50-g)*ct*0.85 |0; b = b+(55-b)*ct*0.85 |0;
-          if(bxm>4&&bxm<10&&wym>4&&wym<10&&bxm%4<2&&wym%4<2){
-            r=r+(210-r)*ct*0.7|0; g=g+(192-g)*ct*0.7|0; b=b+(88-b)*ct*0.7|0;
-          }
-        } else {
-          r = r+(72-r)*ct*0.4 |0; g = g+(72-g)*ct*0.4 |0; b = b+(72-b)*ct*0.4 |0;
-        }
-      }
-
-      const pi = (by*cw + bx)*4;
-      d[pi]=r; d[pi+1]=g; d[pi+2]=b; d[pi+3]=255;
-    }
-  }
-
-  // Place band at correct position in buffer
-  const bufY = fromWY - (tPaintedTo - TBUF_H);
-  tBufCtx.putImageData(img, 0, Math.max(0, TBUF_H - (toWY - (tPaintedTo - TBUF_H))));
-}
-
-// ── Init / refill ─────────────────────────────────────────────────
-function tEnsureBuf(){
-  const cw = W()||480;
-  if(!tBuf || tBuf.width !== cw){
-    tBuf = document.createElement('canvas');
-    tBuf.width = cw; tBuf.height = TBUF_H;
-    tBufCtx = tBuf.getContext('2d');
-    tPaintedTo = 0;
-    tScrollY = 0;
-  }
-}
-
-// Paint world rows fromWY..toWY into tBuf, shifting buffer up as needed
-function tEnsurePainted(upToWY){
-  if(upToWY <= tPaintedTo) return;
-  const cw = W()||480;
-  const newRows = upToWY - tPaintedTo;
-
-  // Shift existing buffer content up by newRows
-  if(tPaintedTo > 0){
-    const existing = tBufCtx.getImageData(0, newRows, cw, TBUF_H - newRows);
-    tBufCtx.putImageData(existing, 0, 0);
-  }
-
-  // Paint the new rows at the bottom of the buffer
-  const bandStart = tPaintedTo;
-  const bandH = newRows;
-  const img = tBufCtx.createImageData(cw, bandH);
-  const d = img.data;
-
-  for(let by = 0; by < bandH; by++){
-    const wy = bandStart + by;
-    const feats = tFeatsAt(wy);
-    for(let bx = 0; bx < cw; bx++){
-      let n = tn(bx, wy);
-      let [r,g,b] = tcol(n, bx, wy);
-      for(const f of feats){
-        const dd = Math.abs(bx - f.x);
-        if(f.type==='river' && dd < f.w){
-          const tt=(1-dd/f.w)**3;
-          r=r+(18-r)*tt*0.92|0; g=g+(88-g)*tt*0.92|0; b=b+(180-b)*tt*0.92|0;
-          if(dd>f.w*0.75){r=Math.min(255,r+30);g=Math.min(255,g+30);b=Math.min(255,b+25);}
-        } else if(f.type==='road'&&n>0.44&&n<0.88&&dd<f.w){
-          const tt=(1-dd/f.w)**2;
-          const grey=82*tt+r*(1-tt)|0;
-          r=grey;g=grey;b=grey+4;
-          if(dd<1.2&&(wy%22)<11){r=210;g=205;b=140;}
-        }
-      }
-      if(n<0.42&&Math.sin(bx*0.31+wy*0.67+tSeed)>0.84){r=Math.min(255,r+45);g=Math.min(255,g+35);b=Math.min(255,b+20);}
-      if(n>0.88){const s=(Math.sin(bx*0.7+wy*0.6)*0.3+0.7)*0.5;r=r+(215-r)*s|0;g=g+(213-g)*s|0;b=b+(210-b)*s|0;}
+      if(n<0.42&&Math.sin(bx*0.31+wy*0.67+s)>0.85){r=Math.min(255,r+40);g=Math.min(255,g+30);b=Math.min(255,b+18);}
+      // Snow
+      if(n>0.88){const sv=(Math.sin(bx*0.7+wy*0.6)*0.3+0.7)*0.45;r=r+(215-r)*sv|0;g=g+(213-g)*sv|0;b=b+(210-b)*sv|0;}
+      // Forest
       const fd=tn(bx*0.6+400,wy*0.6+300);
-      if(n>0.52&&n<0.76&&fd>0.62){const ft=Math.min(1,(fd-0.62)/0.15);r=r+(12-r)*ft*0.8|0;g=g+(62-g)*ft*0.8|0;b=b+(8-b)*ft*0.8|0;}
+      if(n>0.52&&n<0.76&&fd>0.63){const ft=Math.min(1,(fd-0.63)/0.14);r=r+(12-r)*ft*0.75|0;g=g+(62-g)*ft*0.75|0;b=b+(8-b)*ft*0.75|0;}
+      // City
       const cb=tn(bx*0.4+800,wy*0.4+600);
-      if(n>0.50&&n<0.82&&cb>0.68){
-        const ct=Math.min(1,(cb-0.68)/0.12);
+      if(n>0.50&&n<0.82&&cb>0.69){
+        const ct=Math.min(1,(cb-0.69)/0.11);
         const bxm=bx%16,wym=wy%16;
         if(bxm>2&&bxm<13&&wym>2&&wym<13){
           r=r+(48-r)*ct*0.85|0;g=g+(50-g)*ct*0.85|0;b=b+(55-b)*ct*0.85|0;
-          if(bxm>4&&bxm<10&&wym>4&&wym<10&&bxm%4<2&&wym%4<2){r=r+(210-r)*ct*0.7|0;g=g+(192-g)*ct*0.7|0;b=b+(88-b)*ct*0.7|0;}
-        } else {r=r+(72-r)*ct*0.4|0;g=g+(72-g)*ct*0.4|0;b=b+(72-b)*ct*0.4|0;}
+          if(bxm>4&&bxm<10&&wym>4&&wym<10&&bxm%4<2&&wym%4<2){r=r+(210-r)*ct*0.7|0;g=g+(190-g)*ct*0.7|0;b=b+(88-b)*ct*0.7|0;}
+        } else {r=r+(72-r)*ct*0.38|0;g=g+(72-g)*ct*0.38|0;b=b+(72-b)*ct*0.38|0;}
       }
-      const pi=(by*cw+bx)*4;
+
+      const pi=(row*cw+bx)*4;
       d[pi]=r;d[pi+1]=g;d[pi+2]=b;d[pi+3]=255;
     }
   }
-  tBufCtx.putImageData(img, 0, TBUF_H - bandH);
-  tPaintedTo = upToWY;
+  tc.putImageData(img, 0, destY);
 }
 
 function initTerrain(){
-  tSeed = 1 + (Math.random()*899)|0;
-  tScrollY = 0;
-  tPaintedTo = 0;
-  tBuf = null;
-  tEnsureBuf();
-  // Pre-paint enough to fill the screen immediately
-  const preH = Math.ceil((H()||780) * 1.5);
-  tEnsurePainted(preH);
+  tSeed = 1+(Math.random()*899)|0;
+  tScrollY = 0; tCurWY = 0; tCurIdx = 0; tReady = false;
+  const cw = W()||480, ch = H()||780;
+
+  // Create two screen-sized canvases
+  tCanvases = []; tCtxs = [];
+  for(let i=0;i<2;i++){
+    const c = document.createElement('canvas');
+    c.width = cw; c.height = ch;
+    tCanvases.push(c);
+    tCtxs.push(c.getContext('2d'));
+  }
+
+  // Paint canvas 0 fully (world rows 0..ch)
+  tPaintRows(tCtxs[0], 0, ch, 0, cw);
+  tCurWY = 0;
+
+  // Start painting canvas 1 (world rows ch..2ch) — will finish lazily
+  tNextWY = ch;
+  tPaintRows(tCtxs[1], ch, ch, 0, cw);
+
+  tReady = true;
 }
 
+// Rows painted into next canvas so far
+let tNextPainted = 0;
+
 function drawTerrain(){
-  tEnsureBuf();
-  const h = H(), cw = W();
-  // Ensure we always have content ahead
-  const worldBottom = tScrollY + h;
-  if(tPaintedTo < worldBottom + 100){
-    tEnsurePainted(worldBottom + 80);
+  if(!tReady) return;
+  const cw=W(), ch=H();
+  const cur = tCanvases[tCurIdx];
+  const next = tCanvases[1-tCurIdx];
+  const nextCtx = tCtxs[1-tCurIdx];
+
+  // How many px have we scrolled since cur canvas started
+  const scrolledInCur = tScrollY - tCurWY;
+
+  // Draw current canvas offset upward by scrolledInCur
+  ctx.drawImage(cur, 0, -scrolledInCur);
+
+  // If we've scrolled past the midpoint of cur, start showing next canvas below
+  if(scrolledInCur > 0){
+    ctx.drawImage(next, 0, ch - scrolledInCur);
   }
-  // Draw: buffer bottom = tScrollY + h (screen bottom = world front = high worldY)
-  // In the buffer, tPaintedTo is at the bottom pixel.
-  // Screen top maps to world row: tScrollY
-  // bufferY for screen top = TBUF_H - (tPaintedTo - tScrollY)
-  const bufTop = TBUF_H - (tPaintedTo - tScrollY);
-  ctx.drawImage(tBuf, 0, bufTop, cw, h, 0, 0, cw, h);
+
+  // When we've scrolled a full canvas height, swap
+  if(scrolledInCur >= ch){
+    tCurIdx = 1 - tCurIdx;
+    tCurWY += ch;
+    // Repaint the old canvas (now the "next" slot) with upcoming rows
+    const newNextWY = tCurWY + ch;
+    tPaintRows(tCtxs[1-tCurIdx], newNextWY, ch, 0, cw);
+  }
+
   tScrollY += SCROLL_SPEED;
 }
 
